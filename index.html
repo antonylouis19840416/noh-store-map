@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>HIROSHIMA NOH BREWERY 卸先マップ</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<style>
+  :root{
+    --forest:#1f3d2b; --forest2:#2e5c40; --moss:#7a8c5a; --moss-l:#a7b585;
+    --bg:#f4f1e9; --card:#ffffff; --ink:#243027; --muted:#6b7568; --line:#e0ddd2;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;color:var(--ink);background:var(--bg)}
+  #app{display:flex;flex-direction:column;height:100%}
+  header{background:var(--forest);color:#f4f1e9;padding:12px 18px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  header h1{font-size:17px;margin:0;letter-spacing:.04em;font-weight:700}
+  header .sub{font-size:12px;color:var(--moss-l)}
+  header .count{margin-left:auto;font-size:12px;color:#dfe5d2}
+  #main{flex:1;display:flex;min-height:0}
+  #sidebar{width:320px;max-width:42%;overflow-y:auto;background:var(--card);border-right:1px solid var(--line)}
+  #map{flex:1;min-height:0}
+  .filter{padding:10px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--card);z-index:5}
+  .filter input{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px}
+  .store{padding:11px 14px;border-bottom:1px solid var(--line);cursor:pointer;transition:background .12s}
+  .store:hover{background:#f0efe7}
+  .store.flagged{background:#fbf6ee}
+  .store .nm{font-weight:700;font-size:14px;margin:0 0 3px}
+  .store .ad{font-size:12px;color:var(--muted);line-height:1.4}
+  .store .meta{font-size:11px;color:var(--moss);margin-top:4px;display:flex;gap:8px;flex-wrap:wrap}
+  .badge{display:inline-block;font-size:10px;padding:1px 6px;border-radius:9px;background:var(--moss-l);color:#2a3320}
+  .badge.warn{background:#e8b04b;color:#3a2a00}
+  .links a{display:inline-block;margin-top:5px;margin-right:6px;font-size:11px;text-decoration:none;
+           padding:3px 9px;border-radius:7px;border:1px solid var(--moss);color:var(--forest2)}
+  .links a.ig{background:var(--forest2);color:#fff;border-color:var(--forest2)}
+  .pop .nm{font-weight:700;font-size:14px;margin-bottom:3px}
+  .pop .ad{font-size:12px;color:#555;margin-bottom:6px}
+  .pop a{font-size:12px;margin-right:8px}
+  footer{font-size:11px;color:var(--muted);padding:6px 14px;background:var(--card);border-top:1px solid var(--line)}
+  @media(max-width:680px){
+    #main{flex-direction:column}
+    #sidebar{width:100%;max-width:none;max-height:42%;border-right:none;border-bottom:1px solid var(--line)}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>HIROSHIMA NOH BREWERY</h1>
+    <span class="sub">お取扱店マップ</span>
+    <span class="count" id="hdrcount"></span>
+  </header>
+  <div id="main">
+    <aside id="sidebar">
+      <div class="filter"><input id="q" type="search" placeholder="店名・地域で絞り込み"></div>
+      <div id="list"></div>
+    </aside>
+    <div id="map"></div>
+  </div>
+  <footer id="foot"></footer>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+const DATA = {"brewery": "HIROSHIMA NOH BREWERY", "generated": "2026-06-14", "public": true, "stores": [{"name": "ONOMICHI U2", "address": "広島県尾道市西御所町5-11", "lat": 34.40242, "lng": 133.190445, "ig": "https://www.instagram.com/onomichi_u2/", "hp": "https://onomichi-u2.com/", "link": "https://www.instagram.com/onomichi_u2/", "tel": "0848-21-0550", "area": "広島県尾道市"}], "home": null, "mapped_count": 1, "total_count": 1};
+const STORES = DATA.stores;
+
+const map = L.map('map', {scrollWheelZoom:true}).setView([34.39,132.45], 8);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+function linksHtml(s, big){
+  let h = '';
+  if(s.ig) h += `<a class="ig" href="${esc(s.ig)}" target="_blank" rel="noopener">Instagram</a>`;
+  if(s.hp) h += `<a href="${esc(s.hp)}" target="_blank" rel="noopener">HP</a>`;
+  if(big && s.address) h += `<a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.address)}" target="_blank" rel="noopener">経路</a>`;
+  return h;
+}
+
+// マーカー
+const markers = {};
+const bounds = [];
+const moss = L.divIcon({className:'', html:'<div style="width:16px;height:16px;border-radius:50%;background:#2e5c40;border:3px solid #fff;box-shadow:0 0 0 1px #2e5c40"></div>', iconSize:[16,16], iconAnchor:[8,8]});
+STORES.forEach((s,i)=>{
+  if(s.lat==null||s.lng==null) return;
+  const m = L.marker([s.lat,s.lng],{icon:moss}).addTo(map);
+  const info = (!DATA.public && (s.last_date||s.orders))
+    ? [s.last_date?('最終出荷 '+s.last_date):'', s.orders?('出荷 '+s.orders+'回'):''].filter(Boolean).join(' / ') : '';
+  m.bindPopup(`<div class="pop"><div class="nm">${esc(s.name)}</div><div class="ad">${esc(s.address)}</div>${linksHtml(s,true)||''}${info?`<div style="font-size:11px;color:#7a8c5a;margin-top:6px">${esc(info)}</div>`:''}</div>`);
+  markers[i] = m; bounds.push([s.lat,s.lng]);
+});
+
+// 醸造所ピン
+if(DATA.home){
+  const beer = L.divIcon({className:'', html:'<div style="font-size:22px;line-height:1">🍺</div>', iconSize:[22,22], iconAnchor:[11,20]});
+  L.marker([DATA.home.lat,DATA.home.lng],{icon:beer,zIndexOffset:1000}).addTo(map)
+    .bindPopup(`<div class="pop"><div class="nm">${esc(DATA.home.name)}</div><div class="ad">${esc(DATA.home.address)}</div></div>`);
+  bounds.push([DATA.home.lat,DATA.home.lng]);
+}
+if(bounds.length) map.fitBounds(bounds,{padding:[40,40],maxZoom:14});
+
+// サイドリスト
+const listEl = document.getElementById('list');
+function render(filter){
+  filter = (filter||'').trim().toLowerCase();
+  listEl.innerHTML = '';
+  let shown = 0;
+  STORES.forEach((s,i)=>{
+    const hay = (s.name+' '+s.address+' '+(s.area||'')).toLowerCase();
+    if(filter && !hay.includes(filter)) return;
+    shown++;
+    const flagged = !DATA.public && ((!s.link) || (s.lat==null));
+    const div = document.createElement('div');
+    div.className = 'store'+(flagged?' flagged':'');
+    const badges = [];
+    if(s.area) badges.push('<span class="badge">'+esc(s.area)+'</span>');
+    if(!DATA.public && !s.link) badges.push('<span class="badge warn">IG/HP未登録</span>');
+    if(!DATA.public && s.lat==null) badges.push('<span class="badge warn">位置不明</span>');
+    if(!DATA.public && s.orders) badges.push('<span class="badge">出荷'+s.orders+'回</span>');
+    div.innerHTML = `<div class="nm">${esc(s.name)}</div>`+
+      (s.address?`<div class="ad">${esc(s.address)}</div>`:'')+
+      `<div class="meta">${badges.join('')}</div>`+
+      `<div class="links">${linksHtml(s,false)}</div>`;
+    div.addEventListener('click',()=>{
+      if(markers[i]){ map.flyTo([s.lat,s.lng],15); markers[i].openPopup(); }
+    });
+    listEl.appendChild(div);
+  });
+  const base = DATA.public ? `${DATA.mapped_count} 店掲載` : `${DATA.mapped_count}/${DATA.total_count} 店を地図化`;
+  document.getElementById('hdrcount').textContent = base + (shown!==DATA.total_count?`（表示 ${shown}）`:'');
+}
+document.getElementById('q').addEventListener('input', e=>render(e.target.value));
+render('');
+
+document.getElementById('foot').textContent =
+  `最終更新: ${DATA.generated}　|　地図: © OpenStreetMap contributors`;
+</script>
+</body>
+</html>
